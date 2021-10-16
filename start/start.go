@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go-ent-sample/ent"
 	"go-ent-sample/ent/car"
+	"go-ent-sample/ent/group"
 	"go-ent-sample/ent/user"
 	"log"
 	"time"
@@ -116,5 +117,127 @@ func QueryCarUsers(ctx context.Context, a8m *ent.User) error {
 		}
 		log.Printf("car %q owner: %q\n", ca.Model, owner.Name)
 	}
+	return nil
+}
+
+func CreateGraph(ctx context.Context, client *ent.Client) error {
+	// 最初に、ユーザーを複数作成する
+	a8m, err := client.User.
+		Create().
+		SetAge(30).
+		SetName("Ariel").
+		Save(ctx)
+	if err != nil {
+		return err
+	}
+	neta, err := client.User.
+		Create().
+		SetAge(28).
+		SetName("Neta").
+		Save(ctx)
+	if err != nil {
+		return err
+	}
+	// その後、車を複数作成し、作成中のユーザーと紐付けます
+	err = client.Car.
+		Create().
+		SetModel("Tesla").
+		SetRegisteredAt(time.Now()). // グラフ内の時間を無視する
+		SetOwner(a8m).               // このグラフをユーザー"Ariel"にアタッチする
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	err = client.Car.
+		Create().
+		SetModel("Mazda").
+		SetRegisteredAt(time.Now()). // グラフ内の時間を無視する
+		SetOwner(a8m).               // このグラフをユーザー"Ariel"にアタッチする
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	err = client.Car.
+		Create().
+		SetModel("Ford").
+		SetRegisteredAt(time.Now()). // グラフ内の時間を無視する
+		SetOwner(neta).              // このグラフをユーザー"Neta"にアタッチする
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	// グループを作って、作成中にユーザーを追加します。
+	err = client.Group.
+		Create().
+		SetName("GitLab").
+		AddUsers(neta, a8m).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	err = client.Group.
+		Create().
+		SetName("GitHub").
+		AddUsers(a8m).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	log.Println("The graph was created successfully")
+	return nil
+}
+
+func QueryGithub(ctx context.Context, client *ent.Client) error {
+	cars, err := client.Group.
+		Query().
+		Where(group.Name("GitHub")). // (Group(Name=GitHub),)
+		QueryUsers().                // (User(Name=Ariel, Age=30),)
+		QueryCars().                 // (Car(Model=Tesla, RegisteredAt=<Time>), Car(Model=Mazda, RegisteredAt=<Time>),)
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("failed getting cars: %w", err)
+	}
+	log.Println("cars returned:", cars)
+	// Output: (Car(Model=Tesla, RegisteredAt=<Time>), Car(Model=Mazda, RegisteredAt=<Time>),)
+	return nil
+}
+
+func QueryArielCars(ctx context.Context, client *ent.Client) error {
+	// 前の手順でユーザー "Ariel" を入手する
+	a8m := client.User.
+		Query().
+		Where(
+			user.HasCars(),
+			user.Name("Ariel"),
+		).
+		OnlyX(ctx)
+	cars, err := a8m. // a8mが接続されているグループを取得する
+				QueryGroups(). // (Group(Name=GitHub), Group(Name=GitLab),)
+				QueryUsers().  // (User(Name=Ariel, Age=30), User(Name=Neta, Age=28),)
+				QueryCars().   //
+				Where(         //
+			car.Not( //  NetaとArielの車を取得する
+				car.Model("Mazda"), //  しかし、"Mazda"というモデル名の車は除外する
+			), //
+		). //
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("failed getting cars: %w", err)
+	}
+	log.Println("cars returned:", cars)
+	// Output: (Car(Model=Tesla, RegisteredAt=<Time>), Car(Model=Ford, RegisteredAt=<Time>),)
+	return nil
+}
+
+func QueryGroupWithUsers(ctx context.Context, client *ent.Client) error {
+	groups, err := client.Group.
+		Query().
+		Where(group.HasUsers()).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("failed getting groups: %w", err)
+	}
+	log.Println("groups returned:", groups)
+	// Output: (Group(Name=GitHub), Group(Name=GitLab),)
 	return nil
 }
